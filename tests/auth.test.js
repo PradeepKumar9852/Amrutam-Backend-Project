@@ -240,4 +240,46 @@ describe('Authentication & Role-Based Authorization Tests', () => {
       expect(resDoctor.body.success).toBe(false);
     });
   });
+
+  // 5. REFRESH TOKEN ROTATION TESTS
+  describe('Refresh Token Rotation', () => {
+    let currentRefreshToken;
+
+    it('should return a valid refreshToken on login', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: testPatient.email,
+          password: testPatient.password,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toHaveProperty('refreshToken');
+      currentRefreshToken = res.body.data.refreshToken;
+    });
+
+
+    it('should successfully refresh access token and return new rotated refresh token', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: currentRefreshToken });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toHaveProperty('token');
+      expect(res.body.data).toHaveProperty('accessToken');
+      expect(res.body.data).toHaveProperty('refreshToken');
+      expect(res.body.data.refreshToken).not.toBe(currentRefreshToken);
+    });
+
+    it('should reject already used/rotated refresh token (replay attack prevention)', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: currentRefreshToken });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+    });
+  });
 });
+

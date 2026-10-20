@@ -9,6 +9,7 @@ const {
   registerPatientSchema,
   registerDoctorSchema,
   loginSchema,
+  refreshTokenSchema,
 } = require('./auth.validation');
 
 const router = express.Router();
@@ -39,7 +40,7 @@ router.post(
 
 /**
  * @route   POST /api/v1/auth/login
- * @desc    Authenticate user & return JWT token
+ * @desc    Authenticate user & return JWT token pair
  * @access  Public (Rate limited)
  */
 router.post(
@@ -48,6 +49,19 @@ router.post(
   validateRequest(loginSchema),
   authController.login
 );
+
+/**
+ * @route   POST /api/v1/auth/refresh
+ * @desc    Rotate and refresh access token using valid refresh token
+ * @access  Public (Rate limited)
+ */
+router.post(
+  '/refresh',
+  authRateLimiter,
+  validateRequest(refreshTokenSchema),
+  authController.refreshToken
+);
+
 
 /**
  * @route   GET /api/v1/auth/me

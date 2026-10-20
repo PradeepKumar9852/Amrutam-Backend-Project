@@ -1,11 +1,13 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const config = require('../../config/env');
 const { prisma } = require('../../config/prisma');
+const { blacklistToken, isTokenBlacklisted } = require('../../config/redis');
 const ApiError = require('../../utils/apiError');
 
 /**
- * Generate signed JWT token
+ * Generate signed JWT Access token (15m or configured)
  */
 function generateToken(user) {
   return jwt.sign(
@@ -13,6 +15,7 @@ function generateToken(user) {
       sub: user.id,
       email: user.email,
       role: user.role,
+      type: 'ACCESS',
     },
     config.jwtSecret,
     {
@@ -20,6 +23,40 @@ function generateToken(user) {
     }
   );
 }
+
+/**
+ * Generate signed JWT Refresh token (7 days) with unique JTI nonce for rotation
+ */
+function generateRefreshToken(user) {
+  return jwt.sign(
+    {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      type: 'REFRESH',
+      jti: crypto.randomUUID(),
+    },
+    config.jwtSecret,
+    {
+      expiresIn: '7d',
+    }
+  );
+}
+
+
+/**
+ * Generate Access and Refresh token pair
+ */
+function generateAuthTokens(user) {
+  const token = generateToken(user);
+  const refreshToken = generateRefreshToken(user);
+  return {
+    token,
+    accessToken: token,
+    refreshToken,
+  };
+}
+
 
 /**
  * Sanitize user object to never leak password hashes or internal sensitive secrets
@@ -96,12 +133,13 @@ async function registerPatient(payload, clientInfo = {}) {
     return { user, patientProfile };
   });
 
-  const token = generateToken(result.user);
+  const tokens = generateAuthTokens(result.user);
   return {
     user: sanitizeUser(result.user, result.patientProfile),
-    token,
+    ...tokens,
   };
 }
+
 
 /**
  * Register a new doctor
@@ -177,10 +215,10 @@ async function registerDoctor(payload, clientInfo = {}) {
     return { user, doctorProfile };
   });
 
-  const token = generateToken(result.user);
+  const tokens = generateAuthTokens(result.user);
   return {
     user: sanitizeUser(result.user, result.doctorProfile),
-    token,
+    ...tokens,
   };
 }
 
@@ -225,14 +263,62 @@ async function login(email, password, clientInfo = {}) {
     },
   });
 
-  const token = generateToken(user);
+  const tokens = generateAuthTokens(user);
   const profile = user.role === 'PATIENT' ? user.patientProfile : user.doctorProfile;
 
   return {
     user: sanitizeUser(user, profile),
-    token,
+    ...tokens,
   };
 }
+
+/**
+ * Rotate and exchange valid refresh token for a new access & refresh token pair
+ */
+async function refreshAuthTokens(refreshToken) {
+  let decoded;
+  try {
+    decoded = jwt.verify(refreshToken, config.jwtSecret);
+  } catch (err) {
+    throw ApiError.unauthorized('Invalid or expired refresh token');
+  }
+
+  if (decoded.type !== 'REFRESH') {
+    throw ApiError.unauthorized('Provided token is not a valid refresh token');
+  }
+
+  // Check if refresh token is blacklisted in Redis
+  const isRevoked = await isTokenBlacklisted(refreshToken);
+  if (isRevoked) {
+    throw ApiError.unauthorized('Refresh token has been revoked. Please log in again.');
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: decoded.sub },
+    include: {
+      patientProfile: true,
+      doctorProfile: true,
+    },
+  });
+
+  if (!user || !user.isActive) {
+    throw ApiError.unauthorized('User not found or account disabled');
+  }
+
+  // Invalidate old refresh token to prevent replay attacks (Refresh Token Rotation)
+  if (decoded.exp) {
+    await blacklistToken(refreshToken, decoded.exp);
+  }
+
+  const tokens = generateAuthTokens(user);
+  const profile = user.role === 'PATIENT' ? user.patientProfile : user.doctorProfile;
+
+  return {
+    user: sanitizeUser(user, profile),
+    ...tokens,
+  };
+}
+
 
 /**
  * Get profile for authenticated user
@@ -254,10 +340,9 @@ async function getProfile(userId) {
   return sanitizeUser(user, profile);
 }
 
-const { blacklistToken } = require('../../config/redis');
-
 /**
  * Logout user by blacklisting current JWT token until expiration
+
  */
 async function logout(token, tokenExp, userId = null) {
   const nowInSeconds = Math.floor(Date.now() / 1000);
@@ -286,10 +371,13 @@ async function logout(token, tokenExp, userId = null) {
 
 module.exports = {
   generateToken,
+  generateAuthTokens,
   sanitizeUser,
   registerPatient,
   registerDoctor,
   login,
   logout,
   getProfile,
+  refreshAuthTokens,
 };
+

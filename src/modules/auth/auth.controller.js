@@ -81,10 +81,26 @@ async function logout(req, res, next) {
   }
 }
 
+/**
+ * Refresh access token using valid refresh token
+ * POST /api/v1/auth/refresh
+ */
+async function refreshToken(req, res, next) {
+  try {
+    const { refreshToken: tokenInput } = req.body;
+    const result = await authService.refreshAuthTokens(tokenInput);
+    return ApiResponse.success(res, 200, 'Tokens refreshed successfully', result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   registerPatient,
   registerDoctor,
   login,
   logout,
   getMe,
+  refreshToken,
 };
+

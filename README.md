@@ -6,8 +6,9 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-blue.svg)](https://www.postgresql.org/)
 [![Prisma ORM](https://img.shields.io/badge/Prisma-5.22.x-2D3748.svg)](https://www.prisma.io/)
 [![Redis](https://img.shields.io/badge/Redis-7-red.svg)](https://redis.io/)
-[![Tests](https://img.shields.io/badge/Tests-87%20Passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-90%20Passed-brightgreen.svg)](tests/)
 [![Swagger](https://img.shields.io/badge/OpenAPI-3.0.3-85EA2D.svg)](http://localhost:5000/api-docs)
+
 [![Prometheus](https://img.shields.io/badge/Prometheus-Metrics-orange.svg)](http://localhost:5000/metrics)
 
 
