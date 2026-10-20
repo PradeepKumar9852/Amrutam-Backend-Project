@@ -1,0 +1,68 @@
+name: Amrutam Telemedicine Backend CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  validate-and-test:
+    name: Build, Validate & Run Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_test_password
+          POSTGRES_DB: amrutam_ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # 1. Checkout codebase
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Setup Node.js runtime environment (LTS v22)
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      # 3. Clean install dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      # 4. Validate Prisma Schema Syntax & Relations
+      - name: Validate Prisma Schema
+        run: npx prisma validate
+
+      # 5. Generate Prisma Client
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      # 6. Apply database migrations to test PostgreSQL container
+      - name: Run Prisma Database Migrations
+        env:
+          DATABASE_URL: postgresql://postgres:ci_test_password@localhost:5432/amrutam_ci_test?schema=public
+        run: npx prisma migrate deploy
+
+      # 7. Execute automated integration and security test suites
+      - name: Run Jest Test Suite
+        env:
+          NODE_ENV: test
+          PORT: 5001
+          DATABASE_URL: postgresql://postgres:ci_test_password@localhost:5432/amrutam_ci_test?schema=public
+          JWT_SECRET: ci_pipeline_jwt_secret_at_least_32_characters_for_security
+          JWT_EXPIRES_IN: 7d
+          CORS_ORIGIN: "*"
+        run: npm test

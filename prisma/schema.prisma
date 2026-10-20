@@ -1,0 +1,302 @@
+// ===================================================================
+// AMRUTAM TELEMEDICINE BACKEND - PRISMA DATABASE SCHEMA
+// Provider: PostgreSQL
+// ===================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===================================================================
+// ENUMS
+// ===================================================================
+
+enum UserRole {
+  PATIENT
+  DOCTOR
+  ADMIN
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum ConsultationStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
+enum ConsultationType {
+  VIDEO
+  AUDIO
+  CHAT
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum AuditAction {
+  USER_REGISTERED
+  USER_LOGIN
+  SLOT_CREATED
+  SLOT_DELETED
+  BOOKING_CREATED
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  CONSULTATION_COMPLETED
+  PRESCRIPTION_ISSUED
+  PAYMENT_PROCESSED
+  PAYMENT_REFUNDED
+}
+
+// ===================================================================
+// 1. AUTHENTICATION & USERS
+// ===================================================================
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique @db.VarChar(255)
+  passwordHash String    @map("password_hash") @db.VarChar(255)
+  phoneNumber  String?   @unique @map("phone_number") @db.VarChar(20)
+  role         UserRole  @default(PATIENT)
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  // 1-to-1 Profile Relationships
+  patientProfile PatientProfile?
+  doctorProfile  DoctorProfile?
+
+  // Audit Logs triggered by this user
+  auditLogs AuditLog[]
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+// ===================================================================
+// 2. PATIENT PROFILE
+// ===================================================================
+
+model PatientProfile {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @unique @map("user_id") @db.Uuid
+  firstName        String    @map("first_name") @db.VarChar(100)
+  lastName         String    @map("last_name") @db.VarChar(100)
+  dateOfBirth      DateTime? @map("date_of_birth") @db.Date
+  gender           Gender?
+  bloodGroup       String?   @map("blood_group") @db.VarChar(10)
+  emergencyContact String?   @map("emergency_contact") @db.VarChar(20)
+  address          String?   @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  consultations Consultation[]
+  prescriptions Prescription[]
+  payments      Payment[]
+
+  @@index([userId])
+  @@map("patient_profiles")
+}
+
+// ===================================================================
+// 3. DOCTOR PROFILE
+// ===================================================================
+
+model DoctorProfile {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @unique @map("user_id") @db.Uuid
+  firstName        String   @map("first_name") @db.VarChar(100)
+  lastName         String   @map("last_name") @db.VarChar(100)
+  specialization   String   @db.VarChar(150) // e.g. Ayurveda, Panchakarma, Kayachikitsa
+  qualification    String   @db.VarChar(255) // e.g. BAMS, MD (Ayurveda)
+  experienceYears  Int      @default(0) @map("experience_years")
+  licenseNumber    String   @unique @map("license_number") @db.VarChar(100)
+  consultationFee  Decimal  @default(0.00) @map("consultation_fee") @db.Decimal(10, 2)
+  bio              String?  @db.Text
+  isVerified       Boolean  @default(false) @map("is_verified")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availabilitySlots AvailabilitySlot[]
+  consultations     Consultation[]
+  prescriptions     Prescription[]
+
+  @@index([userId])
+  @@index([specialization])
+  @@index([isVerified])
+  @@index([consultationFee])
+  @@index([experienceYears])
+  @@map("doctor_profiles")
+}
+
+// ===================================================================
+// 4. DOCTOR AVAILABILITY SLOTS
+// ===================================================================
+
+model AvailabilitySlot {
+  id        String   @id @default(uuid()) @db.Uuid
+  doctorId  String   @map("doctor_id") @db.Uuid
+  startTime DateTime @map("start_time")
+  endTime   DateTime @map("end_time")
+  isBooked  Boolean  @default(false) @map("is_booked")
+  version   Int      @default(0) // Optimistic locking counter to prevent race conditions
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  doctor       DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  consultation Consultation? // A slot can have at most one consultation
+
+  // A doctor cannot create duplicate overlapping slots for the same starting time
+  @@unique([doctorId, startTime], name: "unique_doctor_slot")
+  @@index([doctorId, startTime, isBooked])
+  @@map("availability_slots")
+}
+
+// ===================================================================
+// 5. CONSULTATIONS & BOOKINGS
+// ===================================================================
+
+model Consultation {
+  id                 String             @id @default(uuid()) @db.Uuid
+  bookingReference   String             @unique @map("booking_reference") @db.VarChar(50) // e.g. AMR-2026-XXXX
+  patientId          String             @map("patient_id") @db.Uuid
+  doctorId           String             @map("doctor_id") @db.Uuid
+  slotId             String             @unique @map("slot_id") @db.Uuid // UNIQUE: Strictly prevents double-booking a slot at DB level!
+  status             ConsultationStatus @default(PENDING)
+  consultationType   ConsultationType   @default(VIDEO) @map("consultation_type")
+  meetingLink        String?            @map("meeting_link") @db.VarChar(500)
+  symptomsSummary    String?            @map("symptoms_summary") @db.Text // Chief complaint summary (non-sensitive general note)
+  cancellationReason String?            @map("cancellation_reason") @db.Text
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  // Relationships
+  patient      PatientProfile   @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  doctor       DoctorProfile    @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  slot         AvailabilitySlot @relation(fields: [slotId], references: [id], onDelete: Restrict)
+  prescription Prescription?
+  payment      Payment?
+
+  @@index([patientId, status])
+  @@index([doctorId, status])
+  @@index([bookingReference])
+  @@map("consultations")
+}
+
+// ===================================================================
+// 6. PRESCRIPTIONS & MEDICINE ITEMS
+// ===================================================================
+
+model Prescription {
+  id             String   @id @default(uuid()) @db.Uuid
+  consultationId String   @unique @map("consultation_id") @db.Uuid
+  doctorId       String   @map("doctor_id") @db.Uuid
+  patientId      String   @map("patient_id") @db.Uuid
+  diagnosis      String   @db.Text
+  notes          String?  @db.Text // Diet, lifestyle, and Ayurvedic pathya advice
+  prescribedAt   DateTime @default(now()) @map("prescribed_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  consultation Consultation       @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  doctor       DoctorProfile      @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  patient      PatientProfile     @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  items        PrescriptionItem[]
+
+  @@index([consultationId])
+  @@index([patientId])
+  @@index([doctorId])
+  @@map("prescriptions")
+}
+
+model PrescriptionItem {
+  id             String   @id @default(uuid()) @db.Uuid
+  prescriptionId String   @map("prescription_id") @db.Uuid
+  medicineName   String   @map("medicine_name") @db.VarChar(200) // e.g. Ashwagandha Churna, Triphala
+  dosage         String   @db.VarChar(100) // e.g. "1 teaspoon (3g)", "2 tablets"
+  frequency      String   @db.VarChar(100) // e.g. "Twice daily after meals"
+  duration       String   @db.VarChar(100) // e.g. "15 days", "1 month"
+  instructions   String?  @db.Text // e.g. "Consume with warm milk or honey"
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // Relationships
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@index([prescriptionId])
+  @@map("prescription_items")
+}
+
+// ===================================================================
+// 7. PAYMENTS
+// ===================================================================
+
+model Payment {
+  id             String        @id @default(uuid()) @db.Uuid
+  consultationId String        @unique @map("consultation_id") @db.Uuid
+  patientId      String        @map("patient_id") @db.Uuid
+  amount         Decimal       @db.Decimal(10, 2)
+  currency       String        @default("INR") @db.VarChar(10)
+  status         PaymentStatus @default(PENDING)
+  transactionId  String?       @unique @map("transaction_id") @db.VarChar(150)
+  paymentMethod  String?       @map("payment_method") @db.VarChar(50) // e.g. UPI, CARD, NET_BANKING
+  paidAt         DateTime?     @map("paid_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  // Relationships
+  consultation Consultation   @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  patient      PatientProfile @relation(fields: [patientId], references: [id], onDelete: Restrict)
+
+  @@index([consultationId])
+  @@index([patientId])
+  @@index([status])
+  @@map("payments")
+}
+
+// ===================================================================
+// 8. AUDIT LOGS
+// ===================================================================
+
+model AuditLog {
+  id         String      @id @default(uuid()) @db.Uuid
+  userId     String?     @map("user_id") @db.Uuid
+  action     AuditAction
+  entityType String      @map("entity_type") @db.VarChar(100) // e.g. "Consultation", "Prescription", "User"
+  entityId   String?     @map("entity_id") @db.VarChar(100)
+  details    Json?       // Additional structured metadata
+  ipAddress  String?     @map("ip_address") @db.VarChar(50)
+  userAgent  String?     @map("user_agent") @db.Text
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  // Relationships
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

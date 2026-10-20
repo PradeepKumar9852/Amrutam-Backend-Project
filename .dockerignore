@@ -1,0 +1,31 @@
+# Ignore local dependency directories
+node_modules/
+npm-debug.log*
+
+# Ignore environment & secret files (never bake secrets into Docker images)
+.env
+.env.*
+!.env.example
+
+# Ignore version control & IDE metadata
+.git/
+.github/
+.vscode/
+.idea/
+
+# Ignore test artifacts & coverage reports
+tests/
+coverage/
+
+# Ignore logs & runtime artifacts
+logs/
+*.log
+pids/
+*.pid
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Documentation not needed inside container
+docs/
