@@ -6,12 +6,12 @@
 # -------------------------------------------------------------------------
 # Stage 1: Dependencies & Prisma Generation
 # -------------------------------------------------------------------------
-FROM node:22-alpine AS builder
+FROM node:22-slim AS builder
 
 WORKDIR /app
 
-# Install OpenSSL and libc dependencies required by Prisma engine on Alpine Linux
-RUN apk add --no-cache openssl libc6-compat
+# Install OpenSSL required by Prisma engine
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency manifests
 COPY package*.json ./
@@ -20,18 +20,18 @@ COPY prisma ./prisma/
 # Install dependencies (including devDependencies required for Prisma generation)
 RUN npm install
 
-# Generate Prisma Client specifically compiled for Linux Alpine
+# Generate Prisma Client
 RUN npx prisma generate
 
 # -------------------------------------------------------------------------
 # Stage 2: Production Runtime
 # -------------------------------------------------------------------------
-FROM node:22-alpine AS runner
+FROM node:22-slim AS runner
 
 WORKDIR /app
 
-# Install OpenSSL and wget for runtime and health checks
-RUN apk add --no-cache openssl libc6-compat wget
+# Install OpenSSL and curl for runtime and health checks
+RUN apt-get update -y && apt-get install -y openssl curl && rm -rf /var/lib/apt/lists/*
 
 # Set production environment defaults (overrideable via docker-compose / env)
 ENV NODE_ENV=production
@@ -56,7 +56,7 @@ EXPOSE 5000
 
 # Container Healthcheck (Verifies HTTP 200 from the healthcheck endpoint)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:5000/api/v1/health || exit 1
+  CMD curl -f http://localhost:5000/api/v1/health || exit 1
 
 # Start the Express server
 CMD ["node", "src/server.js"]

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # =========================================================================
   # 1. PostgreSQL Database Service
@@ -13,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-amrutam_telemedicine}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

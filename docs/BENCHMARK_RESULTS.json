@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-21T06:10:29.138Z",
+  "timestamp": "2026-10-21T12:08:46.575Z",
   "environment": {
     "node": "v22.20.0",
     "platform": "win32",
@@ -15,33 +15,33 @@
     "type": "READ",
     "totalRequests": 200,
     "concurrency": 10,
-    "rps": 73.95,
+    "rps": 156.76,
     "stats": {
-      "min": 28.2,
-      "mean": 126.7,
-      "p50": 73.55,
-      "p90": 205.05,
-      "p95": 790.65,
-      "p99": 1109.01,
-      "max": 1122.73
+      "min": 16.23,
+      "mean": 58.55,
+      "p50": 42.67,
+      "p90": 85.45,
+      "p95": 182.51,
+      "p99": 449.13,
+      "max": 472.23
     },
     "errors": 0,
     "slaTarget": "< 200 ms",
-    "passed": false
+    "passed": true
   },
   "writeBenchmark": {
     "type": "WRITE",
     "totalRequests": 30,
     "concurrency": 5,
-    "rps": 17.55,
+    "rps": 36.65,
     "stats": {
-      "min": 73.67,
-      "mean": 252.8,
-      "p50": 319.95,
-      "p90": 328.05,
-      "p95": 328.05,
-      "p99": 328.05,
-      "max": 328.05
+      "min": 72.92,
+      "mean": 127.49,
+      "p50": 165.95,
+      "p90": 172.98,
+      "p95": 172.98,
+      "p99": 172.98,
+      "max": 172.98
     },
     "errors": 0,
     "slaTarget": "< 500 ms",
