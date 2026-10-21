@@ -11,7 +11,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "lint": "node scripts/lintCheck.js",
-    "test": "jest --runInBand --forceExit"
+    "test": "jest --runInBand --forceExit",
+    "benchmark": "node scripts/loadBenchmark.js"
   },
   "keywords": [
     "amrutam",
