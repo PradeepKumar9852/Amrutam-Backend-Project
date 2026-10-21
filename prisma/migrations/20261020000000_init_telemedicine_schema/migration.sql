@@ -24,6 +24,9 @@ CREATE TABLE "users" (
     "phone_number" VARCHAR(20),
     "role" "UserRole" NOT NULL DEFAULT 'PATIENT',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "mfa_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "mfa_secret" VARCHAR(255),
+    "mfa_backup_codes" JSONB,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
