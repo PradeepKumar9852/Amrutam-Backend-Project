@@ -55,10 +55,14 @@ jobs:
 
       # 6. Validate Prisma Schema Syntax & Relations
       - name: Validate Prisma Schema
+        env:
+          DATABASE_URL: postgresql://postgres:ci_test_password@localhost:5432/amrutam_ci_test?schema=public
         run: npx prisma validate
 
       # 7. Generate Prisma Client
       - name: Generate Prisma Client
+        env:
+          DATABASE_URL: postgresql://postgres:ci_test_password@localhost:5432/amrutam_ci_test?schema=public
         run: npx prisma generate
 
       # 8. Apply database migrations to test PostgreSQL container
