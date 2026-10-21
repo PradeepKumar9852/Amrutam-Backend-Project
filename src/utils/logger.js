@@ -52,6 +52,11 @@ function sanitizeMeta(obj) {
 }
 
 function output(level, message, meta = {}) {
+  // In test environment, suppress noisy expected error/warn logs so Jest output is clean
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+
   const safeMeta = sanitizeMeta(meta);
   const logEntry = {
     timestamp: formatTimestamp(),
