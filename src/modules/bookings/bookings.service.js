@@ -1,8 +1,10 @@
 const { prisma } = require('../../config/prisma');
 const ApiError = require('../../utils/apiError');
-const { deletePattern } = require('../../config/redis');
+const { deletePattern, acquireLock, releaseLock } = require('../../config/redis');
 const jobQueue = require('../../jobs/jobQueue');
 
+
+const crypto = require('crypto');
 
 /**
  * Generate a unique human-friendly booking reference: AMR-YYYYMMDD-XXXX
@@ -11,6 +13,17 @@ function generateBookingReference() {
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
   return `AMR-${dateStr}-${randomSuffix}`;
+}
+
+/**
+ * Compute normalized payload hash for idempotency integrity checks
+ */
+function computeBookingPayloadHash(payload) {
+  const normalized = {
+    slotId: payload.slotId,
+    consultationType: payload.consultationType || 'VIDEO',
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
 }
 
 /**
@@ -43,6 +56,20 @@ async function createBooking(userId, payload, idempotencyKey = null, clientInfo 
     });
 
     if (existingLog && existingLog.entityId) {
+      // Reject if key is reused with a different slot or payload
+      const currentHash = computeBookingPayloadHash(payload);
+      const originalHash = existingLog.details?.payloadHash;
+      const originalSlotId = existingLog.details?.slotId;
+
+      if (
+        (originalHash && originalHash !== currentHash) ||
+        (originalSlotId && originalSlotId !== payload.slotId)
+      ) {
+        throw ApiError.conflict(
+          'Idempotency-Key has already been used with a different request payload'
+        );
+      }
+
       const existingBooking = await prisma.consultation.findUnique({
         where: { id: existingLog.entityId },
         include: {
@@ -57,102 +84,115 @@ async function createBooking(userId, payload, idempotencyKey = null, clientInfo 
     }
   }
 
-  // 3. ATOMIC TRANSACTION WITH POSTGRESQL ROW LOCKING ('SELECT FOR UPDATE')
-  const newBooking = await prisma.$transaction(async (tx) => {
-    // 3a. Lock the target availability slot in PostgreSQL
-    const lockedSlots = await tx.$queryRaw`
-      SELECT id, doctor_id AS "doctorId", start_time AS "startTime", end_time AS "endTime", is_booked AS "isBooked", version
-      FROM availability_slots
-      WHERE id = ${payload.slotId}::uuid
-      FOR UPDATE
-    `;
+  // 3. FAST-PATH DISTRIBUTED MUTEX LOCK (Redis)
+  const lockToken = await acquireLock(`slot:${payload.slotId}`, 10);
+  if (!lockToken) {
+    throw ApiError.conflict('Doctor availability slot is currently being reserved by another request. Please retry shortly.');
+  }
 
-    if (!lockedSlots || lockedSlots.length === 0) {
-      throw ApiError.notFound('Availability slot not found');
-    }
+  let newBooking;
+  try {
+    // 4. ATOMIC TRANSACTION WITH POSTGRESQL ROW LOCKING ('SELECT FOR UPDATE')
+    newBooking = await prisma.$transaction(async (tx) => {
+      // 4a. Lock the target availability slot in PostgreSQL
+      const lockedSlots = await tx.$queryRaw`
+        SELECT id, doctor_id AS "doctorId", start_time AS "startTime", end_time AS "endTime", is_booked AS "isBooked", version
+        FROM availability_slots
+        WHERE id = ${payload.slotId}::uuid
+        FOR UPDATE
+      `;
 
-    const slot = lockedSlots[0];
+      if (!lockedSlots || lockedSlots.length === 0) {
+        throw ApiError.notFound('Availability slot not found');
+      }
 
-    // 3b. Validate that slot is not in the past
-    if (new Date(slot.startTime) < new Date()) {
-      throw ApiError.badRequest('Cannot book an availability slot in the past');
-    }
+      const slot = lockedSlots[0];
 
-    // 3c. CONCURRENCY SHIELD: Check if slot is already booked
-    if (slot.isBooked) {
-      throw ApiError.conflict('Doctor availability slot is already booked. Please choose another slot.');
-    }
+      // 4b. Validate that slot is not in the past
+      if (new Date(slot.startTime) < new Date()) {
+        throw ApiError.badRequest('Cannot book an availability slot in the past');
+      }
 
-    // 3d. Check if patient already has an active booking for this slot
-    const existingSlotBooking = await tx.consultation.findFirst({
-      where: {
-        slotId: slot.id,
-        status: { notIn: ['CANCELLED'] },
-      },
-    });
+      // 4c. CONCURRENCY SHIELD: Check if slot is already booked
+      if (slot.isBooked) {
+        throw ApiError.conflict('Doctor availability slot is already booked. Please choose another slot.');
+      }
 
-    if (existingSlotBooking) {
-      throw ApiError.conflict('This slot is already reserved by another consultation.');
-    }
-
-    // 3e. Mark slot as booked and increment version
-    await tx.availabilitySlot.update({
-      where: { id: slot.id },
-      data: {
-        isBooked: true,
-        version: { increment: 1 },
-      },
-    });
-
-    // 3f. Create Consultation record
-    const bookingReference = generateBookingReference();
-    const meetingLink = `https://telemedicine.amrutam.co.in/room/${bookingReference}`;
-
-    const consultation = await tx.consultation.create({
-      data: {
-        bookingReference,
-        patientId: patient.id,
-        doctorId: slot.doctorId,
-        slotId: slot.id,
-        status: 'CONFIRMED',
-        consultationType: payload.consultationType || 'VIDEO',
-        meetingLink,
-        symptomsSummary: payload.symptomsSummary || null,
-      },
-      include: {
-        doctor: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            specialization: true,
-            consultationFee: true,
-          },
-        },
-        slot: true,
-      },
-    });
-
-    // 3g. Log Audit entry with idempotency key
-    await tx.auditLog.create({
-      data: {
-        userId,
-        action: 'BOOKING_CREATED',
-        entityType: 'Consultation',
-        entityId: consultation.id,
-        details: {
-          bookingReference,
-          idempotencyKey: key,
+      // 4d. Check if patient already has an active booking for this slot
+      const existingSlotBooking = await tx.consultation.findFirst({
+        where: {
           slotId: slot.id,
-          doctorId: slot.doctorId,
+          status: { notIn: ['CANCELLED'] },
         },
-        ipAddress: clientInfo.ip || null,
-        userAgent: clientInfo.userAgent || null,
-      },
-    });
+      });
 
-    return consultation;
-  });
+      if (existingSlotBooking) {
+        throw ApiError.conflict('This slot is already reserved by another consultation.');
+      }
+
+      // 4e. Mark slot as booked and increment version
+      await tx.availabilitySlot.update({
+        where: { id: slot.id },
+        data: {
+          isBooked: true,
+          version: { increment: 1 },
+        },
+      });
+
+      // 4f. Create Consultation record
+      const bookingReference = generateBookingReference();
+      const meetingLink = `https://telemedicine.amrutam.co.in/room/${bookingReference}`;
+
+      const consultation = await tx.consultation.create({
+        data: {
+          bookingReference,
+          patientId: patient.id,
+          doctorId: slot.doctorId,
+          slotId: slot.id,
+          status: 'CONFIRMED',
+          consultationType: payload.consultationType || 'VIDEO',
+          meetingLink,
+          symptomsSummary: payload.symptomsSummary || null,
+        },
+        include: {
+          doctor: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              specialization: true,
+              consultationFee: true,
+            },
+          },
+          slot: true,
+        },
+      });
+
+      // 4g. Log Audit entry with idempotency key and payload hash
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'BOOKING_CREATED',
+          entityType: 'Consultation',
+          entityId: consultation.id,
+          details: {
+            bookingReference,
+            idempotencyKey: key,
+            payloadHash: key ? computeBookingPayloadHash(payload) : null,
+            slotId: slot.id,
+            doctorId: slot.doctorId,
+          },
+          ipAddress: clientInfo.ip || null,
+          userAgent: clientInfo.userAgent || null,
+        },
+      });
+
+      return consultation;
+    });
+  } finally {
+    // Release distributed mutex lock
+    await releaseLock(`slot:${payload.slotId}`, lockToken);
+  }
 
   // Invalidate slot cache across all queries
   await deletePattern('slots:*');

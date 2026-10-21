@@ -42,21 +42,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 4. Validate Prisma Schema Syntax & Relations
+      # 4. Code Syntax & Integrity Linting
+      - name: Run Syntax & Integrity Linter
+        run: npm run lint
+
+      # 5. Production Dependency Security Scanning
+      - name: Scan Dependencies for Security Vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+
+      # 6. Validate Prisma Schema Syntax & Relations
       - name: Validate Prisma Schema
         run: npx prisma validate
 
-      # 5. Generate Prisma Client
+      # 7. Generate Prisma Client
       - name: Generate Prisma Client
         run: npx prisma generate
 
-      # 6. Apply database migrations to test PostgreSQL container
+      # 8. Apply database migrations to test PostgreSQL container
       - name: Run Prisma Database Migrations
         env:
           DATABASE_URL: postgresql://postgres:ci_test_password@localhost:5432/amrutam_ci_test?schema=public
         run: npx prisma migrate deploy
 
-      # 7. Execute automated integration and security test suites
+      # 9. Execute automated integration and security test suites
       - name: Run Jest Test Suite
         env:
           NODE_ENV: test
@@ -66,3 +74,7 @@ jobs:
           JWT_EXPIRES_IN: 7d
           CORS_ORIGIN: "*"
         run: npm test
+
+      # 10. Verify Container Build (Docker Build Check)
+      - name: Verify Docker Container Build
+        run: docker build -t amrutam-backend:ci-test .

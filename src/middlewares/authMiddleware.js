@@ -25,12 +25,17 @@ async function authenticate(req, res, next) {
 
     let decoded;
     try {
-      decoded = jwt.verify(token, config.jwtSecret);
+      decoded = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
     } catch (err) {
       if (err.name === 'TokenExpiredError') {
         throw ApiError.unauthorized('Authentication token has expired. Please log in again.');
       }
       throw ApiError.unauthorized('Invalid authentication token.');
+    }
+
+    // Security check: Only tokens explicitly signed as ACCESS tokens are valid for API authorization
+    if (decoded.type && decoded.type !== 'ACCESS') {
+      throw ApiError.unauthorized('Invalid token type: Access token required');
     }
 
     // Retrieve active user from database
@@ -50,8 +55,8 @@ async function authenticate(req, res, next) {
       throw ApiError.forbidden('Your account has been deactivated. Please contact support.');
     }
 
-    // Exclude password hash from req.user
-    const { passwordHash, ...sanitizedUser } = user;
+    // Exclude password hash and MFA secrets from req.user
+    const { passwordHash, mfaSecret, mfaBackupCodes, ...sanitizedUser } = user;
     req.user = sanitizedUser;
     req.token = token;
     req.tokenExp = decoded.exp;

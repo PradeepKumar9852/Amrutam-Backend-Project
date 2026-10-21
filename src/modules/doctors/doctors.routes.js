@@ -6,6 +6,8 @@ const validateRequest = require('../../middlewares/validateRequest');
 const {
   createSlotSchema,
   createMultipleSlotsSchema,
+  updateSlotSchema,
+  updateDoctorProfileSchema,
   doctorQuerySchema,
   slotQuerySchema,
 } = require('./doctors.validation');
@@ -18,6 +20,19 @@ const router = express.Router();
  * @access  Public
  */
 router.get('/', validateRequest(doctorQuerySchema, 'query'), doctorsController.listDoctors);
+
+/**
+ * @route   PUT /api/v1/doctors/profile
+ * @desc    Update authenticated doctor profile
+ * @access  Private (DOCTOR only)
+ */
+router.put(
+  '/profile',
+  authenticate,
+  authorizeRoles('DOCTOR'),
+  validateRequest(updateDoctorProfileSchema),
+  doctorsController.updateProfile
+);
 
 /**
  * @route   POST /api/v1/doctors/slots
@@ -37,6 +52,20 @@ router.post(
 );
 
 const { uuidParamSchema, slotIdParamSchema } = require('../../utils/commonValidation');
+
+/**
+ * @route   PATCH /api/v1/doctors/slots/:slotId
+ * @desc    Update unbooked availability slot times
+ * @access  Private (DOCTOR only)
+ */
+router.patch(
+  '/slots/:slotId',
+  authenticate,
+  authorizeRoles('DOCTOR'),
+  validateRequest(slotIdParamSchema, 'params'),
+  validateRequest(updateSlotSchema),
+  doctorsController.updateSlot
+);
 
 /**
  * @route   DELETE /api/v1/doctors/slots/:slotId

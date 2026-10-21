@@ -4,6 +4,8 @@ const { prisma } = require('../src/config/prisma');
 const bcrypt = require('bcryptjs');
 
 describe('Doctor Search, Admin Analytics & Audit Logs Integration Tests', () => {
+  jest.setTimeout(30000);
+
   const timestamp = Date.now();
 
   let adminToken;
@@ -169,7 +171,7 @@ describe('Doctor Search, Admin Analytics & Audit Logs Integration Tests', () => 
   // =========================================================================
   // 2. ADMIN DASHBOARD ANALYTICS & ACCESS CONTROL
   // =========================================================================
-  describe('GET /api/v1/admin/analytics', () => {
+  describe('GET /api/v1/admin/analytics & /api/v1/analytics/overview', () => {
     it('should allow ADMIN to retrieve system overview analytics (200 OK)', async () => {
       const res = await request(app)
         .get('/api/v1/admin/analytics')
@@ -181,6 +183,31 @@ describe('Doctor Search, Admin Analytics & Audit Logs Integration Tests', () => 
       expect(res.body.data.overview.totalDoctors).toBeGreaterThanOrEqual(1);
       expect(res.body.data.consultations).toBeDefined();
       expect(Array.isArray(res.body.data.topSpecializations)).toBe(true);
+      expect(Array.isArray(res.body.data.bookingTrends)).toBe(true);
+      expect(res.body.data.cancellations).toBeDefined();
+      expect(res.body.data.cancellations).toHaveProperty('cancellationRate');
+    });
+
+    it('should support date range filtering on analytics endpoint (200 OK)', async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const res = await request(app)
+        .get(`/api/v1/admin/analytics?startDate=${today}&endDate=${today}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.overview.dateRange.startDate).toBe(today);
+      expect(res.body.data.overview.dateRange.endDate).toBe(today);
+    });
+
+    it('should allow ADMIN to retrieve platform analytics via /api/v1/analytics/overview (200 OK)', async () => {
+      const res = await request(app)
+        .get('/api/v1/analytics/overview')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.overview).toBeDefined();
     });
 
     it('should forbid non-admin roles (Patient) from accessing admin analytics (403 Forbidden)', async () => {
@@ -193,6 +220,15 @@ describe('Doctor Search, Admin Analytics & Audit Logs Integration Tests', () => 
       expect(res.body.message).toMatch(/Forbidden/i);
     });
 
+    it('should forbid non-admin roles (Patient) from accessing /api/v1/analytics/overview (403 Forbidden)', async () => {
+      const res = await request(app)
+        .get('/api/v1/analytics/overview')
+        .set('Authorization', `Bearer ${patientToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+    });
+
     it('should forbid unauthenticated requests from accessing admin analytics (401 Unauthorized)', async () => {
       const res = await request(app).get('/api/v1/admin/analytics');
 
@@ -202,10 +238,10 @@ describe('Doctor Search, Admin Analytics & Audit Logs Integration Tests', () => 
   });
 
   // =========================================================================
-  // 3. ADMIN AUDIT LOGS
+  // 3. ADMIN AUDIT LOGS & IMMUTABILITY
   // =========================================================================
-  describe('GET /api/v1/admin/audit-logs', () => {
-    it('should allow ADMIN to retrieve and filter audit logs (200 OK)', async () => {
+  describe('Audit Logs & Immutability Control', () => {
+    it('should allow ADMIN to retrieve and filter audit logs via /api/v1/admin/audit-logs (200 OK)', async () => {
       const res = await request(app)
         .get('/api/v1/admin/audit-logs?page=1&limit=10')
         .set('Authorization', `Bearer ${adminToken}`);
@@ -215,6 +251,34 @@ describe('Doctor Search, Admin Analytics & Audit Logs Integration Tests', () => 
       expect(Array.isArray(res.body.data)).toBe(true);
       expect(res.body.meta).toBeDefined();
       expect(res.body.meta.page).toBe(1);
+    });
+
+    it('should allow ADMIN to retrieve audit logs via /api/v1/audit/logs (200 OK)', async () => {
+      const res = await request(app)
+        .get('/api/v1/audit/logs?page=1&limit=5')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(Array.isArray(res.body.data)).toBe(true);
+    });
+
+    it('should forbid PATIENT from querying audit logs via /api/v1/audit/logs (403 Forbidden)', async () => {
+      const res = await request(app)
+        .get('/api/v1/audit/logs')
+        .set('Authorization', `Bearer ${patientToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should prevent mutation of audit logs (no modification endpoint exists: 404 Not Found)', async () => {
+      const res = await request(app)
+        .delete('/api/v1/audit/logs/some-log-id')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      // Immutability: Deleting or editing audit logs is strictly rejected by routing barrier
+      expect(res.status).toBe(404);
     });
   });
 

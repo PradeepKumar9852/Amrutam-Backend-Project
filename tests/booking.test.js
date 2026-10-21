@@ -283,6 +283,36 @@ describe('Doctor Availability & Appointment Booking Concurrency Tests', () => {
       });
       expect(totalCreated).toBe(1);
     });
+
+    it('should reject reuse of an Idempotency-Key with a different request payload (409 Conflict)', async () => {
+      const conflictKey = `idemp-conflict-${timestamp}-${Math.random()}`;
+
+      // 1st Attempt with testSlot2
+      const res1 = await request(app)
+        .post('/api/v1/bookings')
+        .set('Authorization', `Bearer ${patient1Token}`)
+        .set('Idempotency-Key', conflictKey)
+        .send({
+          slotId: testSlot2.id,
+          symptomsSummary: 'First medical issue',
+        });
+
+      expect(res1.status).toBe(201);
+
+      // 2nd Attempt reusing same Idempotency-Key with a different slot ID
+      const res2 = await request(app)
+        .post('/api/v1/bookings')
+        .set('Authorization', `Bearer ${patient1Token}`)
+        .set('Idempotency-Key', conflictKey)
+        .send({
+          slotId: idempotentSlot.id,
+          symptomsSummary: 'Completely different medical issue and different slot',
+        });
+
+      expect(res2.status).toBe(409);
+      expect(res2.body.success).toBe(false);
+      expect(res2.body.message).toMatch(/different request payload/i);
+    });
   });
 
   // =========================================================================

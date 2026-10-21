@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-10-21T03:38:50.319Z",
+  "environment": {
+    "node": "v22.20.0",
+    "platform": "win32",
+    "serverUrl": "http://localhost:5000"
+  },
+  "targets": {
+    "dailyConsultationsTarget": 100000,
+    "readP95TargetMs": 200,
+    "writeP95TargetMs": 500,
+    "availabilityTarget": "99.95%"
+  },
+  "readBenchmark": {
+    "type": "READ",
+    "totalRequests": 200,
+    "concurrency": 10,
+    "rps": 86.93,
+    "stats": {
+      "min": 32.73,
+      "mean": 106.05,
+      "p50": 77.22,
+      "p90": 150.41,
+      "p95": 416.14,
+      "p99": 744.69,
+      "max": 841.22
+    },
+    "errors": 0,
+    "slaTarget": "< 200 ms",
+    "passed": false
+  },
+  "writeBenchmark": {
+    "type": "WRITE",
+    "totalRequests": 30,
+    "concurrency": 5,
+    "rps": 14.13,
+    "stats": {
+      "min": 202.02,
+      "mean": 326.58,
+      "p50": 401.91,
+      "p90": 425.52,
+      "p95": 425.52,
+      "p99": 425.52,
+      "max": 425.52
+    },
+    "errors": 0,
+    "slaTarget": "< 500 ms",
+    "passed": true
+  }
+}

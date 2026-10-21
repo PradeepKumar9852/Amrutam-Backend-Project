@@ -216,6 +216,74 @@ async function isTokenBlacklisted(token) {
 }
 
 /**
+ * Acquire a distributed mutex lock
+ * @param {string} resourceKey - Name of resource to lock
+ * @param {number} ttlSeconds - Expiration timeout in seconds
+ * @returns {Promise<string|null>} - Returns unique lockToken if acquired, or null if lock is already held
+ */
+async function acquireLock(resourceKey, ttlSeconds = 10) {
+  const lockKey = `lock:${resourceKey}`;
+  const lockToken = crypto.randomUUID();
+
+  if (isRedisConnected()) {
+    try {
+      const result = await redisClient.set(lockKey, lockToken, 'EX', ttlSeconds, 'NX');
+      return result === 'OK' ? lockToken : null;
+    } catch (e) {
+      // Fall through to memory
+    }
+  }
+
+  // In-memory fallback mutex
+  const existing = inMemoryCache.get(lockKey);
+  if (existing && Date.now() <= existing.expiresAt) {
+    return null; // Lock is already held
+  }
+
+  inMemoryCache.set(lockKey, {
+    data: JSON.stringify(lockToken),
+    expiresAt: Date.now() + ttlSeconds * 1000,
+  });
+  return lockToken;
+}
+
+/**
+ * Release a distributed mutex lock safely
+ * @param {string} resourceKey - Name of locked resource
+ * @param {string} lockToken - Unique token obtained upon acquisition
+ */
+async function releaseLock(resourceKey, lockToken) {
+  if (!lockToken) return;
+  const lockKey = `lock:${resourceKey}`;
+
+  if (isRedisConnected()) {
+    try {
+      const luaScript = `
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+          return redis.call('del', KEYS[1])
+        else
+          return 0
+        end
+      `;
+      await redisClient.eval(luaScript, 1, lockKey, lockToken);
+      return;
+    } catch (e) {}
+  }
+
+  // In-memory release
+  const existing = inMemoryCache.get(lockKey);
+  if (existing) {
+    try {
+      if (JSON.parse(existing.data) === lockToken) {
+        inMemoryCache.delete(lockKey);
+      }
+    } catch (e) {
+      inMemoryCache.delete(lockKey);
+    }
+  }
+}
+
+/**
  * Gracefully disconnect Redis on server shutdown
  */
 async function closeRedis() {
@@ -238,5 +306,7 @@ module.exports = {
   deletePattern,
   blacklistToken,
   isTokenBlacklisted,
+  acquireLock,
+  releaseLock,
   closeRedis,
 };

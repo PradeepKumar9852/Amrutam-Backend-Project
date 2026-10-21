@@ -7,7 +7,7 @@ const ApiResponse = require('../../utils/apiResponse');
  */
 async function getAnalytics(req, res, next) {
   try {
-    const analytics = await adminService.getDashboardAnalytics();
+    const analytics = await adminService.getDashboardAnalytics(req.query);
     return ApiResponse.success(res, 200, 'Admin analytics retrieved successfully', analytics);
   } catch (error) {
     next(error);
@@ -59,9 +59,38 @@ async function updateUserStatus(req, res, next) {
   }
 }
 
+/**
+ * Get paginated list of users with search and filters
+ * GET /api/v1/admin/users
+ */
+async function getUsers(req, res, next) {
+  try {
+    const result = await adminService.getUsers(req.query);
+    return ApiResponse.success(res, 200, 'Users retrieved successfully', result.users, result.pagination);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Admin creates a new user account
+ * POST /api/v1/admin/users
+ */
+async function createUser(req, res, next) {
+  try {
+    const user = await adminService.createUser(req.body, req.user.id);
+    return ApiResponse.created(res, 'User created successfully', user);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getAnalytics,
   getAuditLogs,
   verifyDoctor,
   updateUserStatus,
+  getUsers,
+  createUser,
 };
+

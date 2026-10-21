@@ -55,6 +55,32 @@ async function getDoctorSlots(req, res, next) {
 }
 
 /**
+ * Update doctor professional profile
+ * PUT /api/v1/doctors/profile
+ */
+async function updateProfile(req, res, next) {
+  try {
+    const updated = await doctorService.updateDoctorProfile(req.user.id, req.body);
+    return ApiResponse.success(res, 200, 'Doctor profile updated successfully', updated);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Update an existing unbooked availability slot
+ * PATCH /api/v1/doctors/slots/:slotId
+ */
+async function updateSlot(req, res, next) {
+  try {
+    const updated = await doctorService.updateAvailabilitySlot(req.user.id, req.params.slotId, req.body);
+    return ApiResponse.success(res, 200, 'Availability slot updated successfully', updated);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Delete an unbooked availability slot
  * DELETE /api/v1/doctors/slots/:slotId
  */
@@ -70,7 +96,9 @@ async function deleteSlot(req, res, next) {
 module.exports = {
   listDoctors,
   getDoctorById,
+  updateProfile,
   createSlots,
+  updateSlot,
   getDoctorSlots,
   deleteSlot,
 };

@@ -27,18 +27,29 @@ app.use(requestCorrelation);
 app.use(metricsMiddleware);
 
 
-// Helmet sets secure HTTP response headers (CSP disabled to allow Swagger UI inline assets)
+// Helmet sets secure HTTP response headers
 app.use(
   helmet({
-    contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
   })
 );
 
-// CORS configures allowed origins
+// CORS configures allowed origins (compliant with credentials: true)
+const allowedOrigins = config.corsOrigin === '*'
+  ? true
+  : config.corsOrigin.split(',').map((o) => o.trim());
+
 app.use(
   cors({
-    origin: config.corsOrigin === '*' ? '*' : config.corsOrigin.split(','),
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, server-to-server)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins === true) return callback(null, origin);
+      if (allowedOrigins.indexOf(origin) !== -1) {
+        return callback(null, true);
+      }
+      return callback(new Error('CORS policy does not allow access from the specified Origin.'));
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'x-idempotency-key', 'X-Request-Id'],
     exposedHeaders: ['X-Request-Id', 'X-Idempotent-Replay'],
@@ -64,9 +75,17 @@ if (config.isDevelopment) {
 // 2. Swagger / OpenAPI Documentation
 // ==========================================
 
-// Swagger UI Route
+// Swagger UI Route (Scoped relaxed CSP for Swagger UI assets)
 app.use(
   '/api-docs',
+  helmet.contentSecurityPolicy({
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:'],
+    },
+  }),
   swaggerUi.serve,
   swaggerUi.setup(swaggerSpec, {
     customSiteTitle: 'Amrutam Telemedicine API Docs',

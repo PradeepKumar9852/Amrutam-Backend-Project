@@ -20,6 +20,7 @@ class ApiResponse {
 
     if (meta) {
       responsePayload.meta = meta;
+      responsePayload.pagination = meta;
     }
 
     return res.status(statusCode).json(responsePayload);

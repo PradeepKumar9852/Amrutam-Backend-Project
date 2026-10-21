@@ -385,7 +385,8 @@
               "UPI",
               "CARD",
               "NET_BANKING",
-              "WALLET"
+              "WALLET",
+              "FAIL_SIMULATION"
             ],
             "default": "UPI",
             "example": "UPI"
@@ -393,6 +394,11 @@
           "idempotencyKey": {
             "type": "string",
             "example": "idemp-pay-992384"
+          },
+          "simulateFailure": {
+            "type": "boolean",
+            "example": false,
+            "description": "Simulate gateway decline scenario for testing and safe retry"
           }
         }
       },
@@ -441,6 +447,58 @@
         "responses": {
           "200": {
             "description": "System operational status and live PostgreSQL ping latency",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health/liveness": {
+      "get": {
+        "summary": "Kubernetes Liveness Probe",
+        "tags": [
+          "System"
+        ],
+        "description": "Returns 200 UP indicating the Node.js process is active and responsive.",
+        "responses": {
+          "200": {
+            "description": "Process is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health/readiness": {
+      "get": {
+        "summary": "Kubernetes Readiness Probe",
+        "tags": [
+          "System"
+        ],
+        "description": "Verifies database connectivity. Returns 200 READY or 503 NOT_READY to control traffic routing.",
+        "responses": {
+          "200": {
+            "description": "Database connected and service ready to accept traffic",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database disconnected or degraded; pod should not receive traffic",
             "content": {
               "application/json": {
                 "schema": {
@@ -559,6 +617,399 @@
           },
           "401": {
             "description": "Missing, invalid, or expired JWT token"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/profile": {
+      "put": {
+        "summary": "Update Authenticated User Profile",
+        "tags": [
+          "Authentication"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "firstName": {
+                    "type": "string",
+                    "example": "Aarav"
+                  },
+                  "lastName": {
+                    "type": "string",
+                    "example": "Sharma"
+                  },
+                  "phoneNumber": {
+                    "type": "string",
+                    "example": "+919876543210"
+                  },
+                  "dateOfBirth": {
+                    "type": "string",
+                    "format": "date",
+                    "example": "1995-06-15"
+                  },
+                  "gender": {
+                    "type": "string",
+                    "enum": [
+                      "MALE",
+                      "FEMALE",
+                      "OTHER"
+                    ]
+                  },
+                  "bloodGroup": {
+                    "type": "string",
+                    "example": "O+"
+                  },
+                  "emergencyContact": {
+                    "type": "string",
+                    "example": "+919876500000"
+                  },
+                  "address": {
+                    "type": "string",
+                    "example": "45 Ayurveda Lane, Rishikesh"
+                  },
+                  "bio": {
+                    "type": "string",
+                    "example": "Ayurvedic doctor notes"
+                  },
+                  "consultationFee": {
+                    "type": "number",
+                    "example": 750
+                  },
+                  "experienceYears": {
+                    "type": "integer",
+                    "example": 8
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profile updated successfully"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/change-password": {
+      "put": {
+        "summary": "Change User Password and Invalidate Existing Tokens",
+        "tags": [
+          "Authentication"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "currentPassword",
+                  "newPassword"
+                ],
+                "properties": {
+                  "currentPassword": {
+                    "type": "string",
+                    "example": "Password@123"
+                  },
+                  "newPassword": {
+                    "type": "string",
+                    "minLength": 8,
+                    "example": "NewSecurePassword@123"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password changed successfully. New tokens issued."
+          },
+          "400": {
+            "description": "New password cannot be same as current"
+          },
+          "401": {
+            "description": "Incorrect current password"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/deactivate": {
+      "patch": {
+        "summary": "Self Account Deactivation",
+        "tags": [
+          "Authentication"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "example": "Password@123"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "example": "No longer needed"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Account deactivated successfully"
+          },
+          "401": {
+            "description": "Incorrect password"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/mfa/setup": {
+      "post": {
+        "summary": "Initiate MFA Setup for Privileged Account (RFC 6238 TOTP)",
+        "tags": [
+          "Authentication - MFA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns TOTP secret, otpauth URL, and 8 emergency backup codes"
+          },
+          "400": {
+            "description": "MFA already enabled"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/mfa/enable": {
+      "post": {
+        "summary": "Verify 6-digit TOTP Code and Enable MFA",
+        "tags": [
+          "Authentication - MFA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "example": "123456"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "MFA successfully enabled"
+          },
+          "400": {
+            "description": "Invalid 6-digit verification code or expired session"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/mfa/verify-login": {
+      "post": {
+        "summary": "Complete Login MFA Challenge with TOTP or Backup Recovery Code",
+        "tags": [
+          "Authentication - MFA"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "tempToken",
+                  "mfaCode"
+                ],
+                "properties": {
+                  "tempToken": {
+                    "type": "string",
+                    "description": "Ephemeral JWT token returned from initial login"
+                  },
+                  "mfaCode": {
+                    "type": "string",
+                    "example": "123456",
+                    "description": "6-digit TOTP code or backup code"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "MFA verified; returns full JWT access & refresh token pair"
+          },
+          "401": {
+            "description": "Invalid MFA verification code or session expired"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/mfa/disable": {
+      "post": {
+        "summary": "Disable MFA with Password & TOTP/Recovery Code",
+        "tags": [
+          "Authentication - MFA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "password",
+                  "token"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "example": "Password@123"
+                  },
+                  "token": {
+                    "type": "string",
+                    "example": "123456"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "MFA disabled successfully"
+          },
+          "401": {
+            "description": "Invalid password or verification code"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "summary": "Rotate and Refresh Access Token",
+        "tags": [
+          "Authentication"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "refreshToken"
+                ],
+                "properties": {
+                  "refreshToken": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New token pair issued; old refresh token invalidated"
+          },
+          "401": {
+            "description": "Invalid, revoked, or expired refresh token"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/revoke": {
+      "post": {
+        "summary": "Explicitly Revoke Access or Refresh Token",
+        "tags": [
+          "Authentication"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token revoked and added to Redis blacklist"
           }
         }
       }
@@ -1075,6 +1526,237 @@
         }
       }
     },
+    "/api/v1/consultations": {
+      "post": {
+        "summary": "Schedule a Consultation (Patient Only)",
+        "tags": [
+          "Consultations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional unique client key to guarantee exactly-once scheduling"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent replay: returns existing consultation"
+          },
+          "201": {
+            "description": "Consultation scheduled successfully"
+          },
+          "400": {
+            "description": "Slot is in the past or invalid"
+          },
+          "403": {
+            "description": "Forbidden (PATIENT role required)"
+          },
+          "409": {
+            "description": "Conflict: Slot already booked or key reuse conflict"
+          }
+        }
+      },
+      "get": {
+        "summary": "List Consultations for Authenticated User",
+        "tags": [
+          "Consultations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "CONFIRMED",
+                "IN_PROGRESS",
+                "COMPLETED",
+                "CANCELLED",
+                "RESCHEDULED"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated consultations for patient or doctor"
+          }
+        }
+      }
+    },
+    "/api/v1/consultations/{id}": {
+      "get": {
+        "summary": "Get Consultation Details by ID",
+        "tags": [
+          "Consultations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Consultation record with doctor, patient, slot, and prescription"
+          },
+          "403": {
+            "description": "Forbidden (Authorized patient, doctor, or admin only)"
+          },
+          "404": {
+            "description": "Consultation not found"
+          }
+        }
+      }
+    },
+    "/api/v1/consultations/{id}/cancel": {
+      "patch": {
+        "summary": "Cancel Consultation & Release Slot",
+        "tags": [
+          "Consultations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Consultation cancelled and slot released"
+          },
+          "400": {
+            "description": "Cannot cancel a COMPLETED or CANCELLED consultation"
+          },
+          "403": {
+            "description": "Forbidden (Authorized participant or admin only)"
+          },
+          "404": {
+            "description": "Consultation not found"
+          }
+        }
+      }
+    },
+    "/api/v1/consultations/{id}/status": {
+      "patch": {
+        "summary": "Update Consultation State (FSM: CONFIRMED -> IN_PROGRESS -> COMPLETED)",
+        "tags": [
+          "Consultations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Consultation status updated"
+          },
+          "400": {
+            "description": "Invalid state machine transition"
+          },
+          "403": {
+            "description": "Forbidden (Assigned doctor or admin only)"
+          },
+          "404": {
+            "description": "Consultation not found"
+          }
+        }
+      }
+    },
     "/api/v1/prescriptions": {
       "post": {
         "summary": "Issue Ayurvedic Prescription with Medicine Items",
@@ -1216,7 +1898,7 @@
     },
     "/api/v1/admin/analytics": {
       "get": {
-        "summary": "Get System Metrics, Breakdown & Gross Revenue",
+        "summary": "Get System Metrics, Breakdown, Booking Trends, & Gross Revenue",
         "tags": [
           "Admin"
         ],
@@ -1225,9 +1907,141 @@
             "bearerAuth": []
           }
         ],
+        "parameters": [
+          {
+            "name": "startDate",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by start date (YYYY-MM-DD)"
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by end date (YYYY-MM-DD)"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "System analytics and operational summary"
+            "description": "System analytics with booking trends and cancellation metrics"
+          },
+          "403": {
+            "description": "Forbidden (ADMIN only)"
+          }
+        }
+      }
+    },
+    "/api/v1/analytics/overview": {
+      "get": {
+        "summary": "Get Platform Analytics Overview (Admin)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "startDate",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by start date (YYYY-MM-DD)"
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by end date (YYYY-MM-DD)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Platform analytics summary"
+          },
+          "403": {
+            "description": "Forbidden (ADMIN only)"
+          }
+        }
+      }
+    },
+    "/api/v1/audit/logs": {
+      "get": {
+        "summary": "Query Audit Logs (Admin)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entityType",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated audit trail"
           },
           "403": {
             "description": "Forbidden (ADMIN only)"
@@ -1351,6 +2165,134 @@
           },
           "404": {
             "description": "Doctor not found"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users": {
+      "get": {
+        "summary": "List & Search All Users (Admin Control Panel)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "role",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ADMIN",
+                "DOCTOR",
+                "PATIENT"
+              ]
+            }
+          },
+          {
+            "name": "isActive",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated user accounts"
+          },
+          "403": {
+            "description": "Forbidden (ADMIN only)"
+          }
+        }
+      },
+      "post": {
+        "summary": "Admin Creates a User Account",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8
+                  },
+                  "phoneNumber": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "ADMIN",
+                      "DOCTOR",
+                      "PATIENT"
+                    ],
+                    "default": "PATIENT"
+                  },
+                  "isActive": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User account created"
+          },
+          "409": {
+            "description": "Conflict: email or phone already exists"
           }
         }
       }

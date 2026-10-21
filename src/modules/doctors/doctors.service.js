@@ -146,31 +146,42 @@ async function createAvailabilitySlots(userId, slots) {
 
   const slotList = Array.isArray(slots) ? slots : [slots];
 
-  // Validate that no slots in the batch conflict with each other
-  const startTimes = slotList.map((s) => new Date(s.startTime).toISOString());
-  const hasBatchDuplicates = new Set(startTimes).size !== startTimes.length;
-  if (hasBatchDuplicates) {
-    throw ApiError.badRequest('Duplicate slot start times found within the submitted batch');
+  // Validate that no slots in the batch conflict or overlap with each other
+  const sortedBatch = [...slotList].sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+  for (let i = 0; i < sortedBatch.length - 1; i++) {
+    const currentEnd = new Date(sortedBatch[i].endTime).getTime();
+    const nextStart = new Date(sortedBatch[i + 1].startTime).getTime();
+    if (nextStart <= currentEnd) {
+      throw ApiError.badRequest('Overlapping or duplicate slot intervals found within the submitted batch');
+    }
   }
 
   // Create slots in a transaction and log audit
   const createdSlots = await prisma.$transaction(async (tx) => {
+    // Row lock on the doctor profile to serialize concurrent slot creation for the doctor
+    await tx.$queryRaw`
+      SELECT id FROM doctor_profiles WHERE id = ${doctor.id}::uuid FOR UPDATE
+    `;
+
     const results = [];
     for (const slot of slotList) {
       const startTime = new Date(slot.startTime);
       const endTime = new Date(slot.endTime);
 
-      // Check if slot already exists for this doctor
-      const existing = await tx.availabilitySlot.findFirst({
+      // Check if slot overlaps with an existing slot for this doctor
+      const overlapping = await tx.availabilitySlot.findFirst({
         where: {
           doctorId: doctor.id,
-          startTime,
+          AND: [
+            { startTime: { lt: endTime } },
+            { endTime: { gt: startTime } },
+          ],
         },
       });
 
-      if (existing) {
+      if (overlapping) {
         throw ApiError.conflict(
-          `A slot starting at ${startTime.toISOString()} already exists for this doctor`
+          `A slot starting at ${startTime.toISOString()} already exists or overlaps for this doctor`
         );
       }
 
@@ -203,6 +214,109 @@ async function createAvailabilitySlots(userId, slots) {
   await deletePattern('slots:*');
 
   return createdSlots;
+}
+
+/**
+ * Update a doctor's professional profile
+ */
+async function updateDoctorProfile(userId, data) {
+  const doctor = await prisma.doctorProfile.findUnique({
+    where: { userId },
+  });
+
+  if (!doctor) {
+    throw ApiError.notFound('Doctor profile not found');
+  }
+
+  const { firstName, lastName, specialization, qualification, experienceYears, consultationFee, bio } = data;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    return tx.doctorProfile.update({
+      where: { id: doctor.id },
+      data: {
+        ...(firstName && { firstName }),
+        ...(lastName && { lastName }),
+        ...(specialization && { specialization }),
+        ...(qualification && { qualification }),
+        ...(experienceYears !== undefined && { experienceYears }),
+        ...(consultationFee !== undefined && { consultationFee }),
+        ...(bio !== undefined && { bio }),
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            phoneNumber: true,
+            role: true,
+          },
+        },
+      },
+    });
+  });
+
+  await deletePattern('doctors:*');
+  return updated;
+}
+
+/**
+ * Update an existing unbooked availability slot
+ */
+async function updateAvailabilitySlot(userId, slotId, data) {
+  const doctor = await prisma.doctorProfile.findUnique({
+    where: { userId },
+  });
+
+  if (!doctor) {
+    throw ApiError.forbidden('Only doctor owners can update availability slots');
+  }
+
+  const slot = await prisma.availabilitySlot.findUnique({
+    where: { id: slotId },
+  });
+
+  if (!slot) {
+    throw ApiError.notFound('Availability slot not found');
+  }
+
+  if (slot.doctorId !== doctor.id) {
+    throw ApiError.forbidden('You do not have permission to update another doctor’s slot');
+  }
+
+  if (slot.isBooked) {
+    throw ApiError.badRequest('Cannot update a slot that is already booked by a patient');
+  }
+
+  const newStartTime = new Date(data.startTime);
+  const newEndTime = new Date(data.endTime);
+
+  // Check overlapping with any other slot of this doctor
+  const overlapping = await prisma.availabilitySlot.findFirst({
+    where: {
+      doctorId: doctor.id,
+      id: { not: slotId },
+      AND: [
+        { startTime: { lt: newEndTime } },
+        { endTime: { gt: newStartTime } },
+      ],
+    },
+  });
+
+  if (overlapping) {
+    throw ApiError.conflict('Updated time range overlaps with an existing availability slot');
+  }
+
+  const updated = await prisma.availabilitySlot.update({
+    where: { id: slotId },
+    data: {
+      startTime: newStartTime,
+      endTime: newEndTime,
+      version: { increment: 1 },
+    },
+  });
+
+  await deletePattern('slots:*');
+  return updated;
 }
 
 /**
@@ -303,6 +417,8 @@ module.exports = {
   listDoctors,
   getDoctorById,
   createAvailabilitySlots,
+  updateAvailabilitySlot,
+  updateDoctorProfile,
   getDoctorSlots,
   deleteAvailabilitySlot,
 };

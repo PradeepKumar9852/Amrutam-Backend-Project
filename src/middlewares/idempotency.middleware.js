@@ -4,12 +4,25 @@
  * Complies with IETF Idempotency-Key specification draft.
  */
 
+const crypto = require('crypto');
 const { getCache, setCache } = require('../config/redis');
 const ApiError = require('../utils/apiError');
 const logger = require('../utils/logger');
 
 // Local in-memory lock map to prevent in-flight concurrent stampedes
 const inFlightKeys = new Set();
+
+/**
+ * Compute stable hash of incoming request payload
+ */
+function computeRequestHash(req) {
+  const normalized = {
+    method: req.method,
+    url: req.baseUrl + req.path,
+    body: req.body || {},
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+}
 
 /**
  * Creates an idempotency middleware
@@ -35,6 +48,7 @@ function idempotency(options = {}) {
     // Bind key to authenticated user ID or IP to prevent cross-tenant key collision
     const actorId = req.user ? req.user.id : (req.ip || 'anon');
     const storageKey = `idemp:${actorId}:${idempotencyKey}`;
+    const requestHash = computeRequestHash(req);
 
     // 1. Concurrency Shield: Check if exact same key is currently being processed
     if (inFlightKeys.has(storageKey)) {
@@ -49,6 +63,15 @@ function idempotency(options = {}) {
       // 2. Cache Lookup: Check if response has already been cached
       const cached = await getCache(storageKey);
       if (cached && cached.statusCode && cached.body) {
+        // Enforce IETF RFC specification: reject if key is reused with a different request payload
+        if (cached.requestHash && cached.requestHash !== requestHash) {
+          return next(
+            ApiError.conflict(
+              'Idempotency-Key has already been used with a different request payload.'
+            )
+          );
+        }
+
         logger.info(`[IDEMPOTENCY] Replaying cached response for key: ${idempotencyKey}`, {
           actorId,
           method: req.method,
@@ -71,7 +94,7 @@ function idempotency(options = {}) {
 
         // Cache successful responses (2xx and 3xx)
         if (res.statusCode >= 200 && res.statusCode < 400) {
-          setCache(storageKey, { statusCode: res.statusCode, body }, ttl).catch((err) => {
+          setCache(storageKey, { statusCode: res.statusCode, body, requestHash }, ttl).catch((err) => {
             logger.warn(`[IDEMPOTENCY] Failed to cache idempotent response: ${err.message}`);
           });
         }

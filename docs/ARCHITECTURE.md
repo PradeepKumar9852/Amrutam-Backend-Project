@@ -11,43 +11,75 @@
 
 The Amrutam Telemedicine Platform is structured as a **Clean, Modular Monolith** with stateless horizontal autoscaling behind an Application Load Balancer. It isolates domain boundaries while avoiding premature distributed microservice overhead.
 
-```
-                           ┌───────────────────────────────┐
-                           │      Clients / Web / App      │
-                           └───────────────┬───────────────┘
-                                           │ HTTPS (TLS 1.3)
-                                           ▼
-                           ┌───────────────────────────────┐
-                           │   Application Load Balancer   │
-                           │     (AWS ALB / SSL / WAF)     │
-                           └───────────────┬───────────────┘
-                                           │
-                ┌──────────────────────────┴──────────────────────────┐
-                ▼                                                     ▼
-┌───────────────────────────────┐                     ┌───────────────────────────────┐
-│     Node.js App Instance 1    │                     │     Node.js App Instance N    │
-│  - Correlation (X-Request-Id) │                     │  - Correlation (X-Request-Id) │
-│  - Helmet & CORS Headers      │  Horizontal Pod     │  - Helmet & CORS Headers      │
-│  - Global Rate Limiter        │  Autoscaling (HPA)  │  - Global Rate Limiter        │
-│  - Idempotency Middleware     │  (3 to 25 Replicas) │  - Idempotency Middleware     │
-│  - Domain Modular Services    │                     │  - Domain Modular Services    │
-│  - Async Job Dispatcher       │                     │  - Async Job Dispatcher       │
-└───────────────┬───────────────┘                     └───────────────┬───────────────┘
-                │                                                     │
-                ├──────────────────────────┬──────────────────────────┤
-                ▼                          ▼                          ▼
-┌───────────────────────────────┐  ┌────────────────┐  ┌──────────────────────────────┐
-│  Redis 7 In-Memory Cluster    │  │ Async Worker   │  │ PostgreSQL 17 Multi-AZ DB    │
-│  - Doctor & Slot Cache        │  │ Background Job │  │  - Primary Read/Write Instance│
-│  - JWT Revocation Blacklist   │  │ Dispatcher     │  │  - Synchronous Standby (AZ2) │
-│  - In-flight Idempotency Locks│  │ (Reminders/PDF)│  │  - Read Replicas (Reads p95) │
-└───────────────────────────────┘  └────────────────┘  └──────────────────────────────┘
+### A. System Architecture Diagram
+```mermaid
+graph TD
+    Client["Clients (Web / iOS / Android)"] -->|HTTPS / TLS 1.3| ALB["Application Load Balancer (AWS ALB / WAF)"]
+    
+    subgraph Compute ["Stateless App Cluster (Node.js 22 + Express)"]
+        ALB --> Pod1["Node.js Pod 1"]
+        ALB --> Pod2["Node.js Pod 2"]
+        ALB --> PodN["Node.js Pod N (Auto-scaled)"]
+        
+        subgraph Pipeline ["Middleware & Domain Pipeline"]
+            MW["Trace (W3C traceparent) & X-Request-Id"]
+            RL["Rate Limiters (Global & Auth)"]
+            Idemp["Idempotency Interceptor"]
+            Ctrl["Thin Controllers & Zod Validation"]
+            Svc["Domain Services (Auth, Doctor, Booking, Rx, Payment)"]
+            
+            MW --> RL --> Idemp --> Ctrl --> Svc
+        end
+    end
+
+    subgraph DataTier ["Data & Caching Tier"]
+        Svc -->|Pessimistic Row Lock & ACID $tx| PrimaryDB[("PostgreSQL Primary (Multi-AZ Write)")]
+        PrimaryDB -.->|Synchronous Replication| StandbyDB[("PostgreSQL Standby (AZ 2)")]
+        PrimaryDB -.->|Read Streaming| ReadReplica[("PostgreSQL Read Replicas")]
+        Svc -->|Read Queries (Fallback)| ReadReplica
+        
+        Svc -->|Cache & JWT Blacklist| RedisCluster[("Redis Cluster (Sentinel / In-Memory)")]
+    end
+
+    subgraph AsyncTier ["Asynchronous & Observability Tier"]
+        Svc -->|Dispatch Async Tasks| JobQueue["In-Memory / BullMQ Job Queue"]
+        JobQueue --> Notifications["SMS / Email Notification Worker"]
+        JobQueue --> PDFWorker["Prescription PDF Generator"]
+        
+        Pod1 -->|Scrape Metrics| Prometheus["Prometheus Server (/metrics)"]
+        Pod1 -->|Structured JSON Logs| LogAggregator["CloudWatch / ELK Stack"]
+    end
 ```
 
-### Data Flow Execution Model
+### B. Request Data-Flow Diagram
+```mermaid
+flowchart LR
+    User([User Request]) --> ReqId[Attach Request-ID & W3C Trace]
+    ReqId --> RateLimit{Rate Limit OK?}
+    RateLimit -- No --> Err429[429 Too Many Requests]
+    RateLimit -- Yes --> AuthCheck{Auth & RBAC OK?}
+    AuthCheck -- No --> ErrAuth[401/403 Error]
+    AuthCheck -- Yes --> ZodVal{Zod Validation?}
+    ZodVal -- No --> Err400[400 Bad Request]
+    ZodVal -- Yes --> IdempCheck{Idempotency Key?}
+    
+    IdempCheck -- Key Cached --> CachedResp[Return Replayed 200 OK]
+    IdempCheck -- New Key / None --> ExecService[Execute Domain Service]
+    
+    ExecService --> CacheCheck{Cache Hit?}
+    CacheCheck -- Yes --> ReturnCache[Return Cached JSON]
+    CacheCheck -- No --> DBExec[PostgreSQL Transaction / Query]
+    
+    DBExec --> CacheStore[Update Cache / Invalidate]
+    CacheStore --> AuditTrail[Write Audit Log]
+    AuditTrail --> AsyncJob[Enqueue Background Task]
+    AsyncJob --> SuccessResp[200/201 JSON Response + X-Request-Id]
+```
+
+### C. Data Flow Execution Model
 1. **Client Ingestion**: Requests arrive at the ALB with strict TLS termination and WAF filtering (mitigating SQLi, XSS, and DDoS).
 2. **Perimeter Middleware Pipeline**:
-   - `requestId`: Attaches a cryptographically unique `X-Request-Id` UUIDv4.
+   - `requestId`: Attaches a cryptographically unique `X-Request-Id` UUIDv4 and W3C `traceparent`.
    - `metricsMiddleware`: Records duration histograms and counters for Prometheus exposition at `/metrics`.
    - `apiRateLimiter` & `authRateLimiter`: Sliding-window memory/Redis rate limiters.
    - `idempotency`: Intercepts write requests (`POST /api/v1/bookings`, `POST /api/v1/payments/process`) carrying `Idempotency-Key` headers to ensure atomic exactly-once execution.

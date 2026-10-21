@@ -18,10 +18,33 @@ const createSlotSchema = z
       message: 'Slot start time must be in the future',
       path: ['startTime'],
     }
+  )
+  .refine(
+    (data) => {
+      const durationMs = new Date(data.endTime).getTime() - new Date(data.startTime).getTime();
+      const durationMin = durationMs / (1000 * 60);
+      return durationMin >= 15 && durationMin <= 240;
+    },
+    {
+      message: 'Slot duration must be between 15 minutes and 240 minutes (4 hours)',
+      path: ['endTime'],
+    }
   );
 
 const createMultipleSlotsSchema = z.object({
   slots: z.array(createSlotSchema).min(1, 'At least one slot must be provided'),
+});
+
+const updateSlotSchema = createSlotSchema;
+
+const updateDoctorProfileSchema = z.object({
+  firstName: z.string().min(1, 'First name is required').max(100).optional(),
+  lastName: z.string().min(1, 'Last name is required').max(100).optional(),
+  specialization: z.string().min(2, 'Specialization must be at least 2 characters').max(150).optional(),
+  qualification: z.string().min(2, 'Qualification must be at least 2 characters').max(255).optional(),
+  experienceYears: z.number().int().min(0, 'Experience years must be 0 or more').max(70).optional(),
+  consultationFee: z.number().min(0, 'Consultation fee must be non-negative').optional(),
+  bio: z.string().max(2000, 'Bio cannot exceed 2000 characters').optional(),
 });
 
 const doctorQuerySchema = z.object({
@@ -78,6 +101,8 @@ const slotQuerySchema = z.object({
 module.exports = {
   createSlotSchema,
   createMultipleSlotsSchema,
+  updateSlotSchema,
+  updateDoctorProfileSchema,
   doctorQuerySchema,
   slotQuerySchema,
 };

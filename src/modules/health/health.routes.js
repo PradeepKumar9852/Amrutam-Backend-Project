@@ -1,5 +1,5 @@
 const express = require('express');
-const { checkHealth, getMetrics } = require('./health.controller');
+const { checkHealth, getMetrics, getLiveness, getReadiness } = require('./health.controller');
 
 const router = express.Router();
 
@@ -9,6 +9,20 @@ const router = express.Router();
  * @access  Public
  */
 router.get('/', checkHealth);
+
+/**
+ * @route   GET /api/v1/health/liveness
+ * @desc    Kubernetes / Container orchestrator liveness probe
+ * @access  Public
+ */
+router.get('/liveness', getLiveness);
+
+/**
+ * @route   GET /api/v1/health/readiness
+ * @desc    Kubernetes / Load balancer readiness probe
+ * @access  Public
+ */
+router.get('/readiness', getReadiness);
 
 /**
  * @route   GET /api/v1/health/metrics

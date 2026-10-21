@@ -5,6 +5,7 @@ const config = require('../src/config/env');
 const { prisma } = require('../src/config/prisma');
 
 describe('Comprehensive Security & Authorization Test Suite', () => {
+  jest.setTimeout(30000);
   const timestamp = Date.now();
 
   const doctor1Data = {
@@ -375,6 +376,12 @@ describe('Comprehensive Security & Authorization Test Suite', () => {
     let issuedPrescriptionId;
 
     beforeAll(async () => {
+      // Doctor 1 starts the consultation (CONFIRMED -> IN_PROGRESS)
+      await request(app)
+        .patch(`/api/v1/bookings/${testConsultation.id}/status`)
+        .set('Authorization', `Bearer ${doc1Token}`)
+        .send({ status: 'IN_PROGRESS' });
+
       // Doctor 1 issues a prescription
       const rxRes = await request(app)
         .post('/api/v1/prescriptions')

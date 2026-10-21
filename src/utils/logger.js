@@ -13,7 +13,19 @@ const SENSITIVE_KEYS = new Set([
   'authorization',
   'diagnosissummary',
   'symptomssummary',
+  'diagnosis',
+  'notes',
+  'medicalnotes',
+  'prescriptions',
   'emergencycontact',
+  'cardnumber',
+  'cvv',
+  'cvc',
+  'pan',
+  'pin',
+  'cardpin',
+  'totpsecret',
+  'refreshtoken',
 ]);
 
 /**

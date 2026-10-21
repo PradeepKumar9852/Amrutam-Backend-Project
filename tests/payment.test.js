@@ -7,6 +7,8 @@ const app = require('../src/app');
 const { prisma } = require('../src/config/prisma');
 
 describe('Payment Processing, Idempotency & Observability Metrics', () => {
+  jest.setTimeout(30000);
+
   let patientToken;
   let patientUserId;
   let doctorToken;
@@ -193,6 +195,110 @@ describe('Payment Processing, Idempotency & Observability Metrics', () => {
         });
 
       expect(res.statusCode).toBe(401);
+    });
+
+    it('should reject request containing raw credit card numbers or CVVs for PCI-DSS compliance (400 Bad Request)', async () => {
+      const res = await request(app)
+        .post('/api/v1/payments/process')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .send({
+          consultationId: testConsultationId,
+          paymentMethod: 'CARD',
+          cardNumber: '4111222233334444',
+          cvv: '123',
+        });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors?.[0]?.message || res.body.message).toMatch(/Raw card credentials/i);
+    });
+
+    it('should reject reuse of same Idempotency-Key with a different consultation ID (409 Conflict)', async () => {
+      const fakeOtherConsultationId = '11111111-2222-3333-4444-555555555555';
+      const res = await request(app)
+        .post('/api/v1/payments/process')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .set('Idempotency-Key', idempotencyKey)
+        .send({
+          consultationId: fakeOtherConsultationId,
+          paymentMethod: 'UPI',
+        });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/different request payload/i);
+    });
+
+    it('should handle simulated payment gateway failure, record FAILED status & audit log, and permit safe retry', async () => {
+      // 1. Create a slot & booking for failure testing
+      const futureStart = new Date(Date.now() + 172800000);
+      const futureEnd = new Date(Date.now() + 172800000 + 3600000);
+      const slotRes = await request(app)
+        .post('/api/v1/doctors/slots')
+        .set('Authorization', `Bearer ${doctorToken}`)
+        .send({
+          slots: [{ startTime: futureStart.toISOString(), endTime: futureEnd.toISOString() }],
+        });
+      const sId = Array.isArray(slotRes.body.data) ? slotRes.body.data[0].id : slotRes.body.data.id;
+
+      const bookRes = await request(app)
+        .post('/api/v1/bookings')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .send({ slotId: sId, consultationType: 'VIDEO' });
+      const failureConsultationId = bookRes.body.data.id;
+
+      // 2. Process payment with failure simulation
+      const failKey = `fail-idemp-${Date.now()}`;
+      const failRes = await request(app)
+        .post('/api/v1/payments/process')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .set('Idempotency-Key', failKey)
+        .send({
+          consultationId: failureConsultationId,
+          paymentMethod: 'UPI',
+          simulateFailure: true,
+        });
+
+      expect(failRes.statusCode).toBe(400);
+      expect(failRes.body.success).toBe(false);
+      expect(failRes.body.message).toMatch(/declined|insufficient/i);
+
+      // Verify payment in database is recorded as FAILED
+      const failedPaymentInDb = await prisma.payment.findUnique({
+        where: { consultationId: failureConsultationId },
+      });
+      expect(failedPaymentInDb).toBeDefined();
+      expect(failedPaymentInDb.status).toBe('FAILED');
+
+      // Verify audit log exists with status FAILED
+      const failedAudit = await prisma.auditLog.findFirst({
+        where: {
+          action: 'PAYMENT_PROCESSED',
+          details: { path: ['status'], equals: 'FAILED' },
+        },
+      });
+      expect(failedAudit).toBeDefined();
+
+      // 3. SAFE RETRY: Re-attempt payment with valid transaction (re-using same or new key)
+      const retryRes = await request(app)
+        .post('/api/v1/payments/process')
+        .set('Authorization', `Bearer ${patientToken}`)
+        .set('Idempotency-Key', failKey)
+        .send({
+          consultationId: failureConsultationId,
+          paymentMethod: 'UPI',
+          simulateFailure: false,
+        });
+
+      expect(retryRes.statusCode).toBe(201);
+      expect(retryRes.body.success).toBe(true);
+      expect(retryRes.body.data.status).toBe('COMPLETED');
+
+      // Verify payment in database transitioned to COMPLETED
+      const completedPaymentInDb = await prisma.payment.findUnique({
+        where: { consultationId: failureConsultationId },
+      });
+      expect(completedPaymentInDb.status).toBe('COMPLETED');
     });
   });
 

@@ -75,6 +75,6 @@ While the application implements strong defense-in-depth across the backend code
 2. **Reverse Proxy & TLS Termination**:
    - The Node.js application serves HTTP directly in development. In production, TLS/HTTPS termination must be handled by an upstream reverse proxy (e.g. NGINX, AWS ALB, Caddy) with HSTS headers enabled.
 3. **Multi-Factor Authentication (MFA)**:
-   - For administrative and doctor accounts accessing sensitive patient medical histories, TOTP (Time-based One-Time Password) or SMS OTP should be mandated prior to production clinical use.
+   - Implemented in [`src/utils/mfa.js`](../src/utils/mfa.js) using cryptographically secure TOTP (Time-based One-Time Password) RFC 6238 generation, enrollment QR data, and 6-digit verification with timing-safe comparison and clock-skew window toleration for privileged DOCTOR and ADMIN roles.
 4. **Database Connection Encryption**:
    - Ensure PostgreSQL connection strings in production enforce `sslmode=require` or `sslmode=verify-full`.

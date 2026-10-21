@@ -75,6 +75,9 @@ model User {
   phoneNumber  String?   @unique @map("phone_number") @db.VarChar(20)
   role         UserRole  @default(PATIENT)
   isActive     Boolean   @default(true) @map("is_active")
+  mfaEnabled   Boolean   @default(false) @map("mfa_enabled")
+  mfaSecret    String?   @map("mfa_secret") @db.VarChar(255)
+  mfaBackupCodes Json?   @map("mfa_backup_codes")
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
@@ -202,6 +205,8 @@ model Consultation {
   @@index([patientId, status])
   @@index([doctorId, status])
   @@index([bookingReference])
+  @@index([status])
+  @@index([createdAt])
   @@map("consultations")
 }
 

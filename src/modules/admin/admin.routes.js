@@ -7,6 +7,9 @@ const {
   verifyDoctorSchema,
   userStatusSchema,
   auditLogQuerySchema,
+  createUserSchema,
+  userQuerySchema,
+  analyticsQuerySchema,
 } = require('./admin.validation');
 
 const router = express.Router();
@@ -19,7 +22,11 @@ router.use(authenticate, authorizeRoles('ADMIN'));
  * @desc    Get system analytics, revenue summary, and operational metrics
  * @access  Private (ADMIN only)
  */
-router.get('/analytics', adminController.getAnalytics);
+router.get(
+  '/analytics',
+  validateRequest(analyticsQuerySchema, 'query'),
+  adminController.getAnalytics
+);
 
 /**
  * @route   GET /api/v1/admin/audit-logs
@@ -30,6 +37,28 @@ router.get(
   '/audit-logs',
   validateRequest(auditLogQuerySchema, 'query'),
   adminController.getAuditLogs
+);
+
+/**
+ * @route   GET /api/v1/admin/users
+ * @desc    List and search user accounts with status and role filters
+ * @access  Private (ADMIN only)
+ */
+router.get(
+  '/users',
+  validateRequest(userQuerySchema, 'query'),
+  adminController.getUsers
+);
+
+/**
+ * @route   POST /api/v1/admin/users
+ * @desc    Admin creates a user account (with explicit role)
+ * @access  Private (ADMIN only)
+ */
+router.post(
+  '/users',
+  validateRequest(createUserSchema),
+  adminController.createUser
 );
 
 const { uuidParamSchema } = require('../../utils/commonValidation');
@@ -59,3 +88,4 @@ router.patch(
 );
 
 module.exports = router;
+

@@ -44,9 +44,49 @@ function getMetrics(req, res) {
   return res.send(getPrometheusMetrics());
 }
 
+/**
+ * Controller for GET /api/v1/health/liveness (Kubernetes liveness probe)
+ */
+function getLiveness(req, res) {
+  return ApiResponse.success(res, 200, 'Service is alive', {
+    status: 'UP',
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Controller for GET /api/v1/health/readiness (Kubernetes readiness probe)
+ */
+async function getReadiness(req, res) {
+  const { checkDatabaseHealth } = require('../../config/prisma');
+  const dbHealth = await checkDatabaseHealth();
+
+  if (dbHealth.isConnected) {
+    return ApiResponse.success(res, 200, 'Service is ready to accept traffic', {
+      status: 'READY',
+      database: 'connected',
+      latencyMs: dbHealth.latencyMs,
+    });
+  }
+
+  return res.status(503).json({
+    success: false,
+    statusCode: 503,
+    message: 'Service is not ready (Database disconnected)',
+    data: {
+      status: 'NOT_READY',
+      database: 'disconnected',
+      error: dbHealth.error,
+    },
+  });
+}
+
 module.exports = {
   getApiRoot,
   checkHealth,
   getMetrics,
+  getLiveness,
+  getReadiness,
 };
 

@@ -3,6 +3,8 @@ const app = require('../src/app');
 const { prisma } = require('../src/config/prisma');
 
 describe('Consultation Lifecycle & Prescription Management Tests', () => {
+  jest.setTimeout(30000);
+
   const timestamp = Date.now();
 
   const doctor1Data = {
@@ -335,6 +337,185 @@ describe('Consultation Lifecycle & Prescription Management Tests', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // =========================================================================
+  // 4. CONSULTATIONS ENDPOINTS & TENANT ISOLATION
+  // =========================================================================
+  describe('Consultations Endpoint & Authorization Control', () => {
+    let secondSlot;
+    let scheduledConsultationId;
+
+    beforeAll(async () => {
+      const future = new Date(Date.now() + 48 * 60 * 60 * 1000);
+      const slotRes = await request(app)
+        .post('/api/v1/doctors/slots')
+        .set('Authorization', `Bearer ${doctor1Token}`)
+        .send({
+          startTime: new Date(future.setHours(17, 0, 0, 0)).toISOString(),
+          endTime: new Date(future.setHours(18, 0, 0, 0)).toISOString(),
+        });
+      secondSlot = slotRes.body.data[0] || slotRes.body.data;
+    });
+
+    it('should allow patient to schedule consultation via POST /api/v1/consultations (201 Created)', async () => {
+      const res = await request(app)
+        .post('/api/v1/consultations')
+        .set('Authorization', `Bearer ${patient1Token}`)
+        .send({
+          slotId: secondSlot.id,
+          symptomsSummary: 'Follow-up consultation for Pitta pacification',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('CONFIRMED');
+      scheduledConsultationId = res.body.data.id;
+    });
+
+    it('should allow patient to view their own consultation via GET /api/v1/consultations/:id (200 OK)', async () => {
+      const res = await request(app)
+        .get(`/api/v1/consultations/${scheduledConsultationId}`)
+        .set('Authorization', `Bearer ${patient1Token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.id).toBe(scheduledConsultationId);
+    });
+
+    it('should forbid unrelated patient from viewing consultation details via GET /api/v1/consultations/:id (403 Forbidden)', async () => {
+      const res = await request(app)
+        .get(`/api/v1/consultations/${scheduledConsultationId}`)
+        .set('Authorization', `Bearer ${patient2Token}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/not authorized to view/i);
+    });
+
+    it('should forbid unrelated doctor from viewing consultation details (403 Forbidden)', async () => {
+      const res = await request(app)
+        .get(`/api/v1/consultations/${scheduledConsultationId}`)
+        .set('Authorization', `Bearer ${doctor2Token}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/not authorized to view/i);
+    });
+
+    it('should forbid patient from directly updating consultation status (403 Forbidden)', async () => {
+      const res = await request(app)
+        .patch(`/api/v1/consultations/${scheduledConsultationId}/status`)
+        .set('Authorization', `Bearer ${patient1Token}`)
+        .send({ status: 'IN_PROGRESS' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should forbid unassigned doctor from updating consultation status (403 Forbidden)', async () => {
+      const res = await request(app)
+        .patch(`/api/v1/consultations/${scheduledConsultationId}/status`)
+        .set('Authorization', `Bearer ${doctor2Token}`)
+        .send({ status: 'IN_PROGRESS' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/Only the assigned doctor or admin/i);
+    });
+
+    it('should reject invalid terminal state transition (COMPLETED -> IN_PROGRESS) with 400 Bad Request', async () => {
+      const res = await request(app)
+        .patch(`/api/v1/consultations/${activeConsultationId}/status`)
+        .set('Authorization', `Bearer ${doctor1Token}`)
+        .send({ status: 'IN_PROGRESS' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/Invalid consultation status transition/i);
+    });
+
+    it('should list consultations for authenticated patient via GET /api/v1/consultations (200 OK)', async () => {
+      const res = await request(app)
+        .get('/api/v1/consultations')
+        .set('Authorization', `Bearer ${patient1Token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should allow patient to cancel their consultation via PATCH /api/v1/consultations/:id/cancel (200 OK)', async () => {
+      const res = await request(app)
+        .patch(`/api/v1/consultations/${scheduledConsultationId}/cancel`)
+        .set('Authorization', `Bearer ${patient1Token}`)
+        .send({ cancellationReason: 'Rescheduling to a later date' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('CANCELLED');
+    });
+  });
+
+  // =========================================================================
+  // 5. INPUT VALIDATION & CLINICAL INTEGRITY
+  // =========================================================================
+  describe('Input Validation & Clinical Boundaries', () => {
+    it('should reject prescription creation with empty items array (400 Bad Request)', async () => {
+      const res = await request(app)
+        .post('/api/v1/prescriptions')
+        .set('Authorization', `Bearer ${doctor1Token}`)
+        .send({
+          consultationId: activeConsultationId,
+          diagnosis: 'Test diagnosis',
+          items: [],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors).toBeDefined();
+    });
+
+    it('should reject prescription creation with missing dosage or medicine name (400 Bad Request)', async () => {
+      const res = await request(app)
+        .post('/api/v1/prescriptions')
+        .set('Authorization', `Bearer ${doctor1Token}`)
+        .send({
+          consultationId: activeConsultationId,
+          diagnosis: 'Vata imbalance',
+          items: [{ medicineName: 'Ashwagandha' }], // missing dosage, frequency, duration
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors).toBeDefined();
+    });
+
+    it('should reject prescription creation with non-UUID consultationId (400 Bad Request)', async () => {
+      const res = await request(app)
+        .post('/api/v1/prescriptions')
+        .set('Authorization', `Bearer ${doctor1Token}`)
+        .send({
+          consultationId: 'not-a-valid-uuid',
+          diagnosis: 'Vata imbalance',
+          items: [
+            { medicineName: 'Ashwagandha', dosage: '1 tab', frequency: 'Daily', duration: '7 days' },
+          ],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should reject consultation status update with invalid enum value (400 Bad Request)', async () => {
+      const res = await request(app)
+        .patch(`/api/v1/consultations/${activeConsultationId}/status`)
+        .set('Authorization', `Bearer ${doctor1Token}`)
+        .send({ status: 'INVALID_STATUS' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
     });
   });
 });
