@@ -76,11 +76,11 @@ jobs:
           DATABASE_URL: postgresql://postgres:ci_test_password@localhost:5432/amrutam_ci_test?schema=public
         run: npx prisma generate
 
-      # 8. Apply database migrations to test PostgreSQL container
+      # 8. Apply database schema to test PostgreSQL container
       - name: Run Prisma Database Migrations
         env:
           DATABASE_URL: postgresql://postgres:ci_test_password@localhost:5432/amrutam_ci_test?schema=public
-        run: npx prisma migrate deploy
+        run: npx prisma db push --accept-data-loss
 
       # 9. Execute automated integration and security test suites
       - name: Run Jest Test Suite
