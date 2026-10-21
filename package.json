@@ -12,7 +12,8 @@
     "prisma:studio": "prisma studio",
     "lint": "node scripts/lintCheck.js",
     "test": "jest --runInBand --forceExit",
-    "benchmark": "node scripts/loadBenchmark.js"
+    "benchmark": "node scripts/loadBenchmark.js",
+    "seed": "node scripts/seed.js"
   },
   "keywords": [
     "amrutam",
