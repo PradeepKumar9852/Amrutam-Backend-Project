@@ -11,6 +11,9 @@ jobs:
     name: Build, Validate & Run Integration Tests
     runs-on: ubuntu-latest
 
+    env:
+      DATABASE_URL: postgresql://postgres:ci_test_password@localhost:5432/amrutam_ci_test?schema=public
+
     services:
       postgres:
         image: postgres:17
